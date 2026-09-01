@@ -46,10 +46,16 @@ one-off script — for any R2 bucket on the configured account.
 | Bulk concurrency | Parallel file uploads via worker pool (default 8) | Typical bulk case is many small/medium files where per-file multipart parallelism alone is not enough |
 | Git | `git init` + local commits only, no GitHub push yet | User's explicit choice this session |
 | License | MIT | User's explicit choice this session |
+| Bucket create/delete | In scope, on the Bucket select screen, both gated by explicit confirmation | User's explicit choice this session — see §6 step 2 |
+| Delete of a non-empty bucket | Refused, with the object count shown, rather than cascade-deleting objects | R2's `DeleteBucket` requires an empty bucket anyway; auto-emptying a bucket is a much larger blast radius than "delete a bucket" implies and wasn't asked for |
 
 ## 4. Non-goals (v1)
 
-- Bucket creation, deletion, or lifecycle/CORS configuration.
+- Bucket lifecycle/CORS/other bucket-level configuration (storage class,
+  public access, custom domains, notifications). Only **create** and
+  **delete** are in scope for buckets themselves.
+- Emptying a non-empty bucket as part of delete (see decisions table above)
+  — deleting a non-empty bucket is refused, not auto-cascaded.
 - Download / sync-back from R2.
 - Multiple named credential profiles / multi-account switching.
 - Bandwidth throttling UI (tunable in code/config, not exposed as a wizard step).
@@ -82,7 +88,7 @@ r2-upload-wizard/
 │       ├── app.py               # R2WizardApp: screen stack, global state
 │       ├── models.py            # dataclasses (see §7)
 │       ├── config.py            # env var detection, validation, .env persistence
-│       ├── r2_client.py         # boto3 client factory, list_buckets, head_object
+│       ├── r2_client.py         # boto3 client factory, list/create/delete bucket, head_object
 │       ├── upload.py            # upload engine: planning, worker pool, progress events
 │       ├── keys.py              # local path -> object key mapping
 │       └── screens/
@@ -134,6 +140,25 @@ mutable module state, to keep screens testable in isolation).
      actions (common cases mapped to friendly text: `InvalidAccessKeyId`,
      `SignatureDoesNotMatch`, network/DNS failure).
    - Selecting a bucket stores it on `WizardState` and advances.
+   - **Create bucket** action (`n` key / button): opens an inline name
+     input. Cloudflare R2 bucket-name rules are validated client-side before
+     the call (lowercase letters, digits, hyphens; 3–63 chars; must
+     start/end alphanumeric) so bad input never round-trips to the API.
+     `BucketAlreadyExists` / `BucketAlreadyOwnedByYou` are mapped to a
+     friendly "that name's taken, try another" message rather than a raw
+     error. On success the list refreshes, the new bucket is auto-selected,
+     and the wizard advances directly to Source select — you just created
+     it to use it.
+   - **Delete bucket** action (`d` key / button, on the highlighted bucket):
+     - First checks whether the bucket is empty (a single `list_objects_v2`
+       call with `MaxKeys=1`). If it is **not** empty, deletion is refused
+       with a message showing the (approximate, "1+" if paginated) object
+       count and no further action is offered — see §4.
+     - If empty, requires typing the bucket name to confirm (not just
+       Y/N — this is a destructive, unrecoverable action) before calling
+       `delete_bucket`.
+     - On success, the list refreshes and stays on this screen (nothing to
+       advance to). On failure, an error banner as above.
 
 3. **Source select** (`screens/source_select.py`)
    - A mode toggle: **File** / **Directory**.
@@ -263,6 +288,12 @@ lines/ordering; append changed keys if not already present).
 ## 9. Upload engine (`upload.py`)
 
 - boto3 client: `boto3.client("s3", endpoint_url=<S3_URL>, aws_access_key_id=..., aws_secret_access_key=..., region_name="auto")`.
+- **Checksum config caveat:** boto3 ≥1.36 changed default checksum behavior
+  in a way that's currently incompatible with R2. The client factory in
+  `r2_client.py` explicitly sets
+  `Config(request_checksum_calculation="when_required", response_checksum_validation="when_required")`
+  so the tool works correctly on current and future boto3 versions rather
+  than pinning to an old release.
 - `TransferConfig` defaults (the doc's "Balanced" profile):
   `multipart_chunksize=64*1024*1024`, `multipart_threshold=256*1024*1024`,
   `max_concurrency=4` (parts-within-a-file), `use_threads=True`.
@@ -296,7 +327,10 @@ lines/ordering; append changed keys if not already present).
 - Common boto3 error codes get friendly copy: `InvalidAccessKeyId`,
   `SignatureDoesNotMatch` → "check your Access Key ID / Secret" and offer a
   **Back to Setup** shortcut; `NoSuchBucket` → re-run bucket list;
-  connection errors → check `CLOUDFLARE_S3_URL` / network.
+  connection errors → check `CLOUDFLARE_S3_URL` / network;
+  `BucketAlreadyExists` / `BucketAlreadyOwnedByYou` → "name's taken, try
+  another"; `BucketNotEmpty` (or the pre-flight non-empty check in §6 step
+  2) → show object count, refuse deletion, no auto-empty offered.
 - Per-file upload failures never abort the batch — see §9.
 
 ## 11. Testing strategy
@@ -354,6 +388,12 @@ lines/ordering; append changed keys if not already present).
   (different-size) file.
 - Deleting/corrupting one env var and relaunching shows it as ✗/⚠ on Setup,
   is fixable inline, and the fix persists to `.env` for the next run.
+- Creating a bucket with a valid new name succeeds, auto-selects it, and the
+  wizard advances to Source select; a taken/invalid name shows a friendly
+  error and stays on the screen.
+- Deleting an empty bucket requires typing its name and then succeeds,
+  refreshing the list; attempting to delete a non-empty bucket is refused
+  with the object count shown and nothing is deleted.
 - Killing network mid-run (or pointing at a bad endpoint) never crashes the
   app; it's reported per-file or as a screen-level retryable error.
 - `uv run pytest` and `uv run ruff check` both pass in CI.
