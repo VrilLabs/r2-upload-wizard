@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from r2_upload_wizard.app import R2WizardApp
+from r2_upload_wizard.screens.setup import SetupScreen
 
 
 @pytest.mark.asyncio
@@ -12,7 +13,7 @@ async def test_app_boots_and_pushes_setup_screen(tmp_path: Path):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.state.dotenv_path == tmp_path / ".env"
-        assert len(app.screen_stack) >= 1
+        assert isinstance(app.screen, SetupScreen)
 
 
 @pytest.mark.asyncio
