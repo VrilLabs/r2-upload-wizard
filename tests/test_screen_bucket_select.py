@@ -1,4 +1,5 @@
 # tests/test_screen_bucket_select.py
+import inspect
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,15 @@ from tests.fakes import FakeS3Client
 
 
 class _RecordingBucketSelectScreen(BucketSelectScreen):
+    # Textual resolves a relative CSS_PATH against
+    # inspect.getfile(self.__class__), i.e. the *most-derived* class's
+    # module -- not the module that declared CSS_PATH. Since this test
+    # double subclasses BucketSelectScreen from within this test file,
+    # without the override below Textual would look for bucket_select.tcss
+    # next to this test file instead of next to screens/bucket_select.py.
+    # Setting _BASE_PATH explicitly restores the correct resolution root.
+    _BASE_PATH = inspect.getfile(BucketSelectScreen)
+
     def _advance(self) -> None:
         self.app.advanced = True
 
@@ -84,3 +94,44 @@ async def test_list_failure_shows_error_and_retry_works(tmp_path: Path):
         from textual.widgets import ListView
 
         assert len(app.screen.query_one("#buckets", ListView).children) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_bucket_success_auto_selects_and_advances(tmp_path: Path):
+    client = FakeS3Client()
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        name_input = app.screen.query_one("#new-bucket-name", Input)
+        name_input.focus()
+        await pilot.press(*list("new-bucket"))
+        await pilot.click("#create-confirm")
+        await pilot.pause()
+        assert "new-bucket" in client.buckets
+        assert app.state.bucket == "new-bucket"
+        assert app.advanced is True
+
+
+@pytest.mark.asyncio
+async def test_create_bucket_taken_name_shows_friendly_error(tmp_path: Path):
+    client = FakeS3Client()
+    client.buckets["taken"] = {}
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        from textual.widgets import Input, Static
+
+        name_input = app.screen.query_one("#new-bucket-name", Input)
+        name_input.focus()
+        await pilot.press(*list("taken"))
+        await pilot.click("#create-confirm")
+        await pilot.pause()
+        message = str(app.screen.query_one("#create-message", Static).render())
+        assert "taken" in message.lower()
+        assert app.advanced is False

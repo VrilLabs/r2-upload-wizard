@@ -3,25 +3,34 @@ from __future__ import annotations
 
 from textual import on, work
 from textual.app import ComposeResult
+from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, Header, ListItem, ListView, Static
+from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, Static
 
 from r2_upload_wizard import r2_client
 from r2_upload_wizard.models import BucketInfo
+from r2_upload_wizard.r2_client import BucketAlreadyExistsError
 
 
 class BucketSelectScreen(Screen[None]):
     """Step 2: pick, create, or delete an R2 bucket."""
 
+    CSS_PATH = "bucket_select.tcss"
+
     BINDINGS = [
         ("escape", "go_back", "Back"),
         ("r", "reload", "Retry"),
+        ("n", "show_create", "New bucket"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Loading buckets...", id="status")
         yield ListView(id="buckets")
+        with Vertical(id="create-row", classes="hidden"):
+            yield Static(id="create-message")
+            yield Input(placeholder="new-bucket-name", id="new-bucket-name")
+            yield Button("Create", id="create-confirm")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -64,3 +73,22 @@ class BucketSelectScreen(Screen[None]):
     def action_reload(self) -> None:
         self.query_one("#status", Static).update("Loading buckets...")
         self._load_buckets()
+
+    def action_show_create(self) -> None:
+        self.query_one("#create-row").remove_class("hidden")
+        self.query_one("#new-bucket-name", Input).focus()
+
+    @on(Button.Pressed, "#create-confirm")
+    def _on_create_confirm(self) -> None:
+        name = self.query_one("#new-bucket-name", Input).value.strip()
+        message = self.query_one("#create-message", Static)
+        try:
+            r2_client.create_bucket(self.app.state.client, name)
+        except ValueError as exc:
+            message.update(f"Invalid name: {exc}")
+            return
+        except BucketAlreadyExistsError as exc:
+            message.update(f"'{exc.name}' is taken -- try another name")
+            return
+        self.app.state.bucket = name
+        self._advance()
