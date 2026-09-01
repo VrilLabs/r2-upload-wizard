@@ -1,3 +1,7 @@
 #create-row.hidden {
     display: none;
 }
+
+#delete-row.hidden {
+    display: none;
+}

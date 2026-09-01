@@ -135,3 +135,73 @@ async def test_create_bucket_taken_name_shows_friendly_error(tmp_path: Path):
         message = str(app.screen.query_one("#create-message", Static).render())
         assert "taken" in message.lower()
         assert app.advanced is False
+
+
+@pytest.mark.asyncio
+async def test_delete_empty_bucket_with_matching_confirmation_succeeds(tmp_path: Path):
+    client = FakeS3Client()
+    client.buckets["old-bucket"] = {}
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from textual.widgets import ListView
+
+        app.screen.query_one("#buckets", ListView).index = 0
+        await pilot.press("d")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        confirm_input = app.screen.query_one("#delete-confirm-name", Input)
+        confirm_input.focus()
+        await pilot.press(*list("old-bucket"))
+        await pilot.click("#delete-confirm")
+        await pilot.pause()
+        assert "old-bucket" not in client.buckets
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_non_empty_bucket(tmp_path: Path):
+    client = FakeS3Client()
+    client.buckets["full-bucket"] = {"a.txt": 5}
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from textual.widgets import ListView
+
+        app.screen.query_one("#buckets", ListView).index = 0
+        await pilot.press("d")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        confirm_input = app.screen.query_one("#delete-confirm-name", Input)
+        confirm_input.focus()
+        await pilot.press(*list("full-bucket"))
+        await pilot.click("#delete-confirm")
+        await pilot.pause()
+        assert "full-bucket" in client.buckets
+        from textual.widgets import Static
+
+        message = str(app.screen.query_one("#delete-message", Static).render())
+        assert "not empty" in message.lower() or "1" in message
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_mismatched_typed_name(tmp_path: Path):
+    client = FakeS3Client()
+    client.buckets["old-bucket"] = {}
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from textual.widgets import ListView
+
+        app.screen.query_one("#buckets", ListView).index = 0
+        await pilot.press("d")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        confirm_input = app.screen.query_one("#delete-confirm-name", Input)
+        confirm_input.focus()
+        await pilot.press(*list("wrong-name"))
+        await pilot.click("#delete-confirm")
+        await pilot.pause()
+        assert "old-bucket" in client.buckets

@@ -9,7 +9,7 @@ from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, S
 
 from r2_upload_wizard import r2_client
 from r2_upload_wizard.models import BucketInfo
-from r2_upload_wizard.r2_client import BucketAlreadyExistsError
+from r2_upload_wizard.r2_client import BucketAlreadyExistsError, BucketNotEmptyError
 
 
 class BucketSelectScreen(Screen[None]):
@@ -21,6 +21,7 @@ class BucketSelectScreen(Screen[None]):
         ("escape", "go_back", "Back"),
         ("r", "reload", "Retry"),
         ("n", "show_create", "New bucket"),
+        ("d", "show_delete", "Delete bucket"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -31,9 +32,15 @@ class BucketSelectScreen(Screen[None]):
             yield Static(id="create-message")
             yield Input(placeholder="new-bucket-name", id="new-bucket-name")
             yield Button("Create", id="create-confirm")
+        with Vertical(id="delete-row", classes="hidden"):
+            yield Static(id="delete-message")
+            yield Input(placeholder="type bucket name to confirm", id="delete-confirm-name")
+            yield Button("Delete", id="delete-confirm")
         yield Footer()
 
     def on_mount(self) -> None:
+        self._buckets: list[BucketInfo] = []
+        self._delete_target: str | None = None
         self._load_buckets()
 
     @work(thread=True)
@@ -46,6 +53,7 @@ class BucketSelectScreen(Screen[None]):
         self.app.call_from_thread(self._show_buckets, buckets)
 
     def _show_buckets(self, buckets: list[BucketInfo]) -> None:
+        self._buckets = buckets
         list_view = self.query_one("#buckets", ListView)
         list_view.remove_children()
         for bucket in buckets:
@@ -92,3 +100,28 @@ class BucketSelectScreen(Screen[None]):
             return
         self.app.state.bucket = name
         self._advance()
+
+    def action_show_delete(self) -> None:
+        list_view = self.query_one("#buckets", ListView)
+        if list_view.index is None or not self._buckets:
+            return
+        self._delete_target = self._buckets[list_view.index].name
+        self.query_one("#delete-message", Static).update(f"Deleting '{self._delete_target}'")
+        self.query_one("#delete-row").remove_class("hidden")
+        self.query_one("#delete-confirm-name", Input).focus()
+
+    @on(Button.Pressed, "#delete-confirm")
+    def _on_delete_confirm(self) -> None:
+        typed = self.query_one("#delete-confirm-name", Input).value.strip()
+        message = self.query_one("#delete-message", Static)
+        if typed != self._delete_target:
+            message.update("Name doesn't match -- not deleted")
+            return
+        try:
+            r2_client.delete_bucket(self.app.state.client, self._delete_target)
+        except BucketNotEmptyError as exc:
+            message.update(f"Bucket is not empty ({exc.approx_count} object(s)) -- not deleted")
+            return
+        message.update(f"Deleted '{self._delete_target}'")
+        self.query_one("#delete-row").add_class("hidden")
+        self.action_reload()
