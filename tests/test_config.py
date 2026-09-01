@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from r2_upload_wizard import config
@@ -73,3 +74,36 @@ def test_detect_env_covers_all_vars(tmp_path: Path):
     statuses = config.detect_env(tmp_path / "nope.env", environ={})
     assert set(statuses) == set(config.ALL_VARS)
     assert config.ALL_VARS == config.REQUIRED_VARS + config.OPTIONAL_VARS
+
+
+def test_persist_creates_file_with_header(tmp_path: Path):
+    dotenv = tmp_path / ".env"
+    config.persist(dotenv, {"CLOUDFLARE_ACCOUNT_ID": "abc"})
+    text = dotenv.read_text()
+    assert "export CLOUDFLARE_ACCOUNT_ID=abc" in text
+    assert text.startswith("# Cloudflare R2 credentials")
+
+
+def test_persist_updates_existing_line_in_place(tmp_path: Path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("# header\nexport CLOUDFLARE_ACCOUNT_ID=old\nexport OTHER=keep\n")
+    config.persist(dotenv, {"CLOUDFLARE_ACCOUNT_ID": "new"})
+    lines = dotenv.read_text().splitlines()
+    assert "export CLOUDFLARE_ACCOUNT_ID=new" in lines
+    assert "export OTHER=keep" in lines
+    assert "# header" in lines
+
+
+def test_persist_appends_new_key_without_touching_others(tmp_path: Path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("export CLOUDFLARE_ACCOUNT_ID=abc\n")
+    config.persist(dotenv, {"CLOUDFLARE_S3_URL": "https://x.r2.cloudflarestorage.com"})
+    text = dotenv.read_text()
+    assert "export CLOUDFLARE_ACCOUNT_ID=abc" in text
+    assert "export CLOUDFLARE_S3_URL=https://x.r2.cloudflarestorage.com" in text
+
+
+def test_apply_to_process_env(monkeypatch):
+    monkeypatch.delenv("R2_WIZARD_TEST_VAR", raising=False)
+    config.apply_to_process_env({"R2_WIZARD_TEST_VAR": "value"})
+    assert os.environ["R2_WIZARD_TEST_VAR"] == "value"

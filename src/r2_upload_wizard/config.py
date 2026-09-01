@@ -84,3 +84,33 @@ def detect_env(
             name=name, value=value, source=source, valid=reason is None, reason=reason
         )
     return statuses
+
+
+def persist(dotenv_path: Path, changed: dict[str, str]) -> None:
+    """Round-trip-safe: rewrite matching KEY=VALUE lines in place, preserving
+    comments/blank lines/order, and append any keys not already present."""
+    existing_lines = dotenv_path.read_text().splitlines() if dotenv_path.exists() else []
+    remaining = dict(changed)
+    out_lines: list[str] = []
+    for raw_line in existing_lines:
+        stripped = raw_line.strip()
+        body = stripped[len("export ") :] if stripped.startswith("export ") else stripped
+        key = (
+            body.partition("=")[0].strip() if "=" in body and not stripped.startswith("#") else None
+        )
+        if key in remaining:
+            out_lines.append(f"export {key}={remaining.pop(key)}")
+        else:
+            out_lines.append(raw_line)
+    if remaining:
+        if not existing_lines:
+            out_lines.append("# Cloudflare R2 credentials -- see README.md")
+        elif out_lines and out_lines[-1] != "":
+            out_lines.append("")
+        for key, value in remaining.items():
+            out_lines.append(f"export {key}={value}")
+    dotenv_path.write_text("\n".join(out_lines) + "\n")
+
+
+def apply_to_process_env(values: dict[str, str]) -> None:
+    os.environ.update(values)
