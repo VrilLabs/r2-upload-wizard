@@ -58,6 +58,7 @@ def _upload_one(
         extra_args["ContentType"] = content_type
 
     item.status = "uploading"
+    on_progress(item)
     try:
         client.upload_file(
             str(item.local_path),
