@@ -20,7 +20,8 @@ class FakeS3Client:
 
     def __init__(self) -> None:
         self.buckets: dict[str, dict[str, int]] = {}
-        self.fail_keys: set[str] = set()  # keys whose upload_file should raise
+        self.fail_keys: set[str] = set()  # keys whose upload_file should raise a ClientError
+        self.fail_exceptions: dict[str, Exception] = {}  # key -> exact exception to raise
 
     def list_buckets(self):
         return {
@@ -54,6 +55,8 @@ class FakeS3Client:
         del self.buckets[Bucket]
 
     def upload_file(self, Filename, Bucket, Key, ExtraArgs=None, Callback=None, Config=None):  # noqa: N803
+        if Key in self.fail_exceptions:
+            raise self.fail_exceptions[Key]
         if Key in self.fail_keys:
             raise _client_error("InternalError", "PutObject")
         size = Path(Filename).stat().st_size

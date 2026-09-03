@@ -2,6 +2,8 @@
 import threading
 from pathlib import Path
 
+from botocore.exceptions import EndpointConnectionError
+
 from r2_upload_wizard import upload
 from r2_upload_wizard.models import UploadItem
 from tests.fakes import FakeS3Client
@@ -86,3 +88,42 @@ def test_run_reports_progress_events_per_item(tmp_path: Path):
     )
     assert "uploading" in seen_statuses
     assert seen_statuses[-1] == "done"
+
+
+def test_run_records_os_error_failures_instead_of_dropping_the_item(tmp_path: Path):
+    # A plain OSError (e.g. the local file vanished between scan and
+    # upload) is not a ClientError -- it must still land on the item as
+    # "failed" and be counted, not silently swallowed by upload.run()'s
+    # concurrent.futures.wait() loop, which never calls future.result().
+    client = FakeS3Client()
+    client.buckets["b"] = {}
+    item = _write_file(tmp_path / "bad.txt", b"x")
+    client.fail_exceptions["bad.txt"] = OSError("file vanished")
+    result = upload.run(
+        client, "b", [item], on_progress=lambda item: None, cancel_event=threading.Event()
+    )
+    assert result.succeeded == 0
+    assert len(result.failed) == 1
+    assert result.failed[0].key == "bad.txt"
+    assert result.failed[0].status == "failed"
+    assert "file vanished" in result.failed[0].error
+    assert "bad.txt" not in client.buckets["b"]
+
+
+def test_run_records_botocore_error_failures_instead_of_dropping_the_item(tmp_path: Path):
+    # botocore.exceptions.EndpointConnectionError (and friends like
+    # ConnectTimeoutError/ReadTimeoutError) derive from BotoCoreError, not
+    # ClientError -- same requirement as the OSError case above.
+    client = FakeS3Client()
+    client.buckets["b"] = {}
+    item = _write_file(tmp_path / "bad.txt", b"x")
+    client.fail_exceptions["bad.txt"] = EndpointConnectionError(endpoint_url="https://example.com")
+    result = upload.run(
+        client, "b", [item], on_progress=lambda item: None, cancel_event=threading.Event()
+    )
+    assert result.succeeded == 0
+    assert len(result.failed) == 1
+    assert result.failed[0].key == "bad.txt"
+    assert result.failed[0].status == "failed"
+    assert result.failed[0].error is not None
+    assert "bad.txt" not in client.buckets["b"]

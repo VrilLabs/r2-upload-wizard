@@ -8,7 +8,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from boto3.s3.transfer import TransferConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from r2_upload_wizard.models import UploadItem, UploadResult
 
@@ -68,7 +68,7 @@ def _upload_one(
             Callback=callback,
             Config=TRANSFER_CONFIG,
         )
-    except ClientError as exc:
+    except (ClientError, BotoCoreError, OSError) as exc:
         item.status = "failed"
         item.error = str(exc)
     else:
