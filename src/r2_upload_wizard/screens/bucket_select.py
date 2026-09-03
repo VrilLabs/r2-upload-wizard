@@ -98,6 +98,9 @@ class BucketSelectScreen(Screen[None]):
         except BucketAlreadyExistsError as exc:
             message.update(f"'{exc.name}' is taken -- try another name")
             return
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the user below
+            message.update(f"Could not create bucket: {exc}")
+            return
         self.app.state.bucket = name
         self._advance()
 
@@ -121,6 +124,9 @@ class BucketSelectScreen(Screen[None]):
             r2_client.delete_bucket(self.app.state.client, self._delete_target)
         except BucketNotEmptyError as exc:
             message.update(f"Bucket is not empty ({exc.approx_count} object(s)) -- not deleted")
+            return
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the user below
+            message.update(f"Could not delete bucket: {exc}")
             return
         message.update(f"Deleted '{self._delete_target}'")
         self.query_one("#delete-row").add_class("hidden")

@@ -205,3 +205,62 @@ async def test_delete_refuses_mismatched_typed_name(tmp_path: Path):
         await pilot.click("#delete-confirm")
         await pilot.pause()
         assert "old-bucket" in client.buckets
+
+
+@pytest.mark.asyncio
+async def test_create_bucket_generic_error_shows_friendly_message_not_a_traceback(tmp_path: Path):
+    client = FakeS3Client()
+
+    def failing_create_bucket(Bucket):  # noqa: N803 -- matches boto3's casing
+        raise RuntimeError("network blip")
+
+    client.create_bucket = failing_create_bucket
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        name_input = app.screen.query_one("#new-bucket-name", Input)
+        name_input.focus()
+        await pilot.press(*list("new-bucket"))
+        await pilot.click("#create-confirm")
+        await pilot.pause()
+        from textual.widgets import Static
+
+        message = str(app.screen.query_one("#create-message", Static).render())
+        assert "network blip" in message
+        assert app.advanced is False
+        assert "new-bucket" not in client.buckets
+
+
+@pytest.mark.asyncio
+async def test_delete_bucket_generic_error_shows_friendly_message_not_a_traceback(tmp_path: Path):
+    client = FakeS3Client()
+    client.buckets["old-bucket"] = {}
+
+    def failing_delete_bucket(Bucket):  # noqa: N803 -- matches boto3's casing
+        raise RuntimeError("network blip")
+
+    client.delete_bucket = failing_delete_bucket
+    app = _TestApp(client, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        from textual.widgets import ListView
+
+        app.screen.query_one("#buckets", ListView).index = 0
+        await pilot.press("d")
+        await pilot.pause()
+        from textual.widgets import Input
+
+        confirm_input = app.screen.query_one("#delete-confirm-name", Input)
+        confirm_input.focus()
+        await pilot.press(*list("old-bucket"))
+        await pilot.click("#delete-confirm")
+        await pilot.pause()
+        assert "old-bucket" in client.buckets
+        from textual.widgets import Static
+
+        message = str(app.screen.query_one("#delete-message", Static).render())
+        assert "network blip" in message
