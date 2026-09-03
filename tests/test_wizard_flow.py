@@ -78,14 +78,19 @@ async def test_full_happy_path_uploads_a_directory(tmp_path: Path, monkeypatch):
         await pilot.click("#continue")  # Source select -> Destination
         await pilot.pause()
 
-        await pilot.click("#continue")  # Destination -> Confirm (default root prefix)
+        from textual.widgets import Input
+
+        prefix_input = app.screen.query_one("#prefix", Input)
+        prefix_input.focus()
+        await pilot.press(*list("backups"))
+        await pilot.click("#continue")  # Destination -> Confirm (non-root prefix)
         await pilot.pause()
         await pilot.click("#confirm")  # Confirm -> Progress -> Summary
         await _wait_for(pilot, lambda: app.state.result is not None)
 
         assert app.state.result.succeeded == 2
-        assert fake_client.buckets["photos"]["a.txt"] == 5
-        assert fake_client.buckets["photos"]["b.txt"] == 6
+        assert fake_client.buckets["photos"]["backups/a.txt"] == 5
+        assert fake_client.buckets["photos"]["backups/b.txt"] == 6
 
         from textual.widgets import Static
 

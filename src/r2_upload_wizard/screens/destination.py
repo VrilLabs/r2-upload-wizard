@@ -43,6 +43,8 @@ class DestinationScreen(Screen[None]):
     @on(Button.Pressed, "#continue")
     def _on_continue(self) -> None:
         self.app.state.prefix = self.query_one("#prefix", Input).value
+        for item in self.app.state.items:
+            item.key = build_key(self.app.state.prefix, item.relative_path)
         self._advance()
 
     def _advance(self) -> None:
