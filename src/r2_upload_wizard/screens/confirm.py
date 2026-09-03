@@ -22,6 +22,7 @@ class ConfirmScreen(Screen[None]):
         ("escape", "go_back", "Back"),
         ("y", "confirm", "Confirm"),
         ("n", "go_back", "Back"),
+        ("s", "skip_check", "Skip check"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -61,16 +62,22 @@ class ConfirmScreen(Screen[None]):
     def _check_existing(self) -> None:
         state = self.app.state
         existing: dict[str, int] = {}
-        with ThreadPoolExecutor(max_workers=_EXISTENCE_CHECK_CONCURRENCY) as pool:
-            futures = {
-                pool.submit(r2_client.head_object_size, state.client, state.bucket, item.key): item
-                for item in state.items
-            }
-            for future in futures:
-                size = future.result()
-                item = futures[future]
-                if size is not None:
-                    existing[item.key] = size
+        try:
+            with ThreadPoolExecutor(max_workers=_EXISTENCE_CHECK_CONCURRENCY) as pool:
+                futures = {
+                    pool.submit(
+                        r2_client.head_object_size, state.client, state.bucket, item.key
+                    ): item
+                    for item in state.items
+                }
+                for future in futures:
+                    size = future.result()
+                    item = futures[future]
+                    if size is not None:
+                        existing[item.key] = size
+        except Exception as exc:  # noqa: BLE001 -- surfaced to the user below
+            self.app.call_from_thread(self._show_existing_check_error, str(exc))
+            return
         self.app.call_from_thread(self._finish_existing_check, existing)
 
     def _finish_existing_check(self, existing: dict[str, int]) -> None:
@@ -84,6 +91,16 @@ class ConfirmScreen(Screen[None]):
         else:
             status.update(f"{count} of {len(self.app.state.items)} destination keys already exist.")
             choice_row.display = True
+
+    def _show_existing_check_error(self, message: str) -> None:
+        # Treat a failed check as "assume nothing exists" so the screen
+        # never gets stuck on "Checking for existing files..." forever --
+        # the user can still proceed and simply won't get skip-existing
+        # protection for this run.
+        self._finish_existing_check({})
+        self.query_one("#existing-status", Static).update(
+            f"Could not check for existing files ({message}) -- assuming none exist."
+        )
 
     @on(Button.Pressed, "#choice-skip")
     def _choose_skip(self) -> None:
@@ -105,6 +122,11 @@ class ConfirmScreen(Screen[None]):
     @on(Button.Pressed, "#back")
     def action_go_back(self) -> None:
         self.app.pop_screen()
+
+    def action_skip_check(self) -> None:
+        """Escape hatch for large trees: stop waiting on the existing-key
+        check and proceed as if nothing exists at the destination yet."""
+        self._finish_existing_check({})
 
     def _advance(self) -> None:
         from r2_upload_wizard.screens.progress import ProgressScreen

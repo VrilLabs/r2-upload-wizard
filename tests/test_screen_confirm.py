@@ -1,7 +1,9 @@
 # tests/test_screen_confirm.py
 from pathlib import Path
+from threading import Event
 
 import pytest
+from botocore.exceptions import ClientError
 from textual import events
 
 from r2_upload_wizard.app import R2WizardApp
@@ -102,3 +104,75 @@ async def test_back_pops_screen_without_advancing(tmp_path: Path):
         await pilot.click("#back")
         await pilot.pause()
         assert app.advanced is False
+
+
+@pytest.mark.asyncio
+async def test_existing_check_failure_shows_friendly_message_and_does_not_block_the_screen(
+    tmp_path: Path,
+):
+    # A generic ClientError from head_object (e.g. AccessDenied on a token
+    # that can list/upload but not HeadObject) must not leave the screen
+    # stuck on "Checking for existing files..." forever, and must not
+    # surface as a raw exception.
+    client = FakeS3Client()
+    client.buckets["b"] = {}
+
+    def failing_head_object(Bucket, Key):  # noqa: N803 -- matches boto3's casing
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "HeadObject")
+
+    client.head_object = failing_head_object
+    items = [_item("a.txt", 5), _item("b.txt", 9)]
+    app = _TestApp(client, "directory", items, dotenv_path=tmp_path / ".env")
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        from textual.widgets import Static
+
+        status = str(app.screen.query_one("#existing-status", Static).render())
+        assert "Checking" not in status
+        assert "AccessDenied" in status or "denied" in status
+        assert app.screen.query_one("#existing-choice").display is False
+
+        # The screen must still be usable after the failed check.
+        await pilot.click("#confirm")
+        await pilot.pause()
+        assert app.advanced is True
+
+
+@pytest.mark.asyncio
+async def test_skip_check_binding_unblocks_the_screen_while_check_is_in_flight(tmp_path: Path):
+    # Use an Event (not a sleep) so the background check is *guaranteed*
+    # to still be in flight when we press "s" -- no race against a timing
+    # window, so this can't be flaky under load.
+    release_check = Event()
+    client = FakeS3Client()
+    client.buckets["b"] = {"a.txt": 5}
+    real_head_object = client.head_object
+
+    def blocking_head_object(Bucket, Key):  # noqa: N803 -- matches boto3's casing
+        release_check.wait(timeout=5)
+        return real_head_object(Bucket=Bucket, Key=Key)
+
+    client.head_object = blocking_head_object
+    items = [_item("a.txt", 5), _item("b.txt", 9)]
+    app = _TestApp(client, "directory", items, dotenv_path=tmp_path / ".env")
+    try:
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            from textual.widgets import Static
+
+            status = str(app.screen.query_one("#existing-status", Static).render())
+            assert "Checking" in status  # guaranteed still in flight, blocked on the Event
+
+            await pilot.press("s")
+            await pilot.pause()
+            status = str(app.screen.query_one("#existing-status", Static).render())
+            assert "Checking" not in status
+            assert app.screen.query_one("#existing-choice").display is False
+
+            await pilot.click("#confirm")
+            await pilot.pause()
+            assert app.advanced is True
+    finally:
+        # Release the blocked background thread so it can finish and the
+        # test doesn't leave a dangling worker behind.
+        release_check.set()
