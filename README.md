@@ -7,6 +7,8 @@ setup, bucket create/select/delete, source picking, a full preview, live
 progress, and a final summary, with no external binaries (no rclone/wrangler)
 required.
 
+This TUI was created to take the complexity out of uploading single or bulk files to Cloudflare R2 buckets. Additionally, existing solutions such as full GUI macOS or Windows apps are useful, however, many times they lock up when uploading large quantities of files. This upload wizard can handle the upload process for tens-of-thousands of files!
+
 Tested and working when uploading ~15,000 files totaling ~5.5GB.
 
 ## Install
