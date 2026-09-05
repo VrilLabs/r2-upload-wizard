@@ -7,6 +7,8 @@ setup, bucket create/select/delete, source picking, a full preview, live
 progress, and a final summary, with no external binaries (no rclone/wrangler)
 required.
 
+Tested and working when uploading ~15,000 files totaling ~5.5GB.
+
 ## Install
 
 ```bash
