@@ -72,10 +72,34 @@ account ID in the Cloudflare dashboard under **R2 > Manage R2 API Tokens**.
   empty before it can be deleted; the wizard shows the object count and
   does not offer to auto-empty it.
 
+## TUI Screenshots
+
+Here are a few screenshots of the TUI for preview purposes:
+
+<div align="center">
+
+  <img src="assets/screenshot-buckets.png" title="Screenshot of R2 bucket list">
+
+  <sub>Screenshot of R2 bucket list</sub>
+
+  <br />
+
+  <img src="assets/screenshot-palette.png" title="Screenshot of in-TUI command palette">
+
+  <sub>Screenshot of in-TUI command palette</sub>
+
+  <br />
+
+  <img src="assets/screenshot-select-upload.png" title="Screenshot of target upload selector">
+
+  <sub>Screenshot of target upload selector</sub>
+
+</div>
+
 ## Development
 
 See `CONTRIBUTING.md`.
 
 ## License
 
-MIT -- see `LICENSE`.
+VRIL LABS OSL v1.0 -- see `LICENSE`.
